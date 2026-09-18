@@ -17,18 +17,50 @@
       <span class="status-dot" title="Ready"></span>
     </header>
 
-    <section id="messages" class="messages" aria-live="polite" aria-label="Chat messages">
+    <nav class="view-tabs" aria-label="Assistant views">
+      <button class="view-tab active" type="button" data-view="chat-view">Chat</button>
+      <button class="view-tab" type="button" data-view="documents-view">Documents</button>
+    </nav>
+
+    <section id="chat-view" class="view-panel active-view">
+      <div id="messages" class="messages" aria-live="polite" aria-label="Chat messages">
       <div class="message assistant-message">
         <div class="message-label">Assistant</div>
         <p>Hello. Ask me something about the available local knowledge.</p>
       </div>
+      </div>
+
+      <form id="chat-form" class="chat-form">
+        <label class="sr-only" for="message-input">Your message</label>
+        <textarea id="message-input" rows="1" maxlength="2000" placeholder="Ask a question..." required></textarea>
+        <button id="send-button" type="submit">Send</button>
+      </form>
     </section>
 
-    <form id="chat-form" class="chat-form">
-      <label class="sr-only" for="message-input">Your message</label>
-      <textarea id="message-input" rows="1" maxlength="2000" placeholder="Ask a question..." required></textarea>
-      <button id="send-button" type="submit">Send</button>
-    </form>
+    <section id="documents-view" class="view-panel" aria-label="Document management">
+      <div class="documents-toolbar">
+        <div>
+          <h2>Documents</h2>
+          <p>Manage local files used by the assistant.</p>
+        </div>
+        <button id="refresh-documents" class="secondary-button" type="button">Refresh</button>
+      </div>
+
+      <div id="document-notice" class="document-notice" role="status" aria-live="polite"></div>
+      <form id="upload-form" class="upload-panel">
+        <div id="drop-zone" class="drop-zone" tabindex="0">
+          <strong>Drop documents here</strong>
+          <span>or choose PDF, DOCX, or TXT files</span>
+          <label class="choose-files" for="file-input">Choose Files</label>
+          <input id="file-input" type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" multiple />
+          <div id="selected-files" class="selected-files">No files selected</div>
+        </div>
+        <button id="upload-button" type="submit">Upload Documents</button>
+      </form>
+
+      <div id="documents-list" class="documents-list" aria-live="polite"></div>
+    </section>
+
     <p class="connection-note">Powered by Ollama on your computer</p>
   </main>
   <script src="app.js"></script>

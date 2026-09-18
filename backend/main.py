@@ -1,13 +1,22 @@
 import os
+import logging
 from pathlib import Path
+from typing import Any
 
-import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from config import FRONTEND_PATH, OLLAMA_BASE_URL, OLLAMA_EMBED_MODEL, OLLAMA_MODEL, validate_settings
+from ollama_client import OllamaClient, OllamaError
+from rag import DocumentDeleteError, DocumentNotFoundError, DocumentProtectedError, IngestionError, RAGService
+
+
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
+validate_settings()
 
 app = FastAPI(title="My AI Assistant API")
 
@@ -20,19 +29,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
-OLLAMA_CHAT_URL = f"{OLLAMA_URL}/api/chat"
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
-KNOWLEDGE_PATH = Path(__file__).parent / "data" / "knowledge.txt"
-FRONTEND_PATH = Path(__file__).parent.parent / "frontend"
+ollama = OllamaClient(OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_EMBED_MODEL)
+rag_service = RAGService(ollama)
 
-SYSTEM_PROMPT = """You are a chatbot that answers questions using the provided knowledge.
-Use the provided knowledge as the primary source.
-If the answer cannot be found in the knowledge, clearly say that the information is not available instead of inventing an answer.
-Keep answers concise and helpful.
+SYSTEM_PROMPT = """You answer questions using only the retrieved local knowledge below.
+Treat the retrieved knowledge as the primary source. If the answer cannot be found there,
+clearly say that the information is not available instead of inventing an answer.
+Do not claim to have searched any other source. Keep the answer concise and helpful.
 
-Provided knowledge:
-{knowledge}
+Retrieved knowledge:
+{context}
 """
 
 
@@ -42,16 +48,15 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+    sources: list[dict[str, Any]] = Field(default_factory=list)
 
 
-def load_knowledge() -> str:
-    """Read the current knowledge file on every request so edits take effect immediately."""
-    try:
-        return KNOWLEDGE_PATH.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return "No local knowledge is available."
-    except OSError:
-        return "The local knowledge file could not be read."
+class IngestResponse(BaseModel):
+    status: str
+    filename: str
+    document_hash: str
+    chunks_added: int
+    message: str | None = None
 
 
 @app.get("/", include_in_schema=False)
@@ -64,6 +69,40 @@ def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/ingest", response_model=IngestResponse)
+async def ingest(file: UploadFile = File(...)) -> IngestResponse:
+    try:
+        result = await rag_service.ingest_upload(file)
+    except IngestionError as error:
+        return JSONResponse(status_code=400, content={"detail": str(error)})
+    except OllamaError as error:
+        logger.exception("Embedding failed during ingestion")
+        return JSONResponse(status_code=503, content={"detail": str(error)})
+    except Exception:
+        logger.exception("Unexpected ingestion failure")
+        return JSONResponse(status_code=500, content={"detail": "Document ingestion failed."})
+    logger.info("Ingestion result: %s", result)
+    return IngestResponse(**result)
+
+
+@app.get("/documents")
+def documents() -> dict[str, Any]:
+    return {"documents": rag_service.list_documents()}
+
+
+@app.delete("/documents/{document_id}")
+def delete_document(document_id: str) -> dict[str, Any]:
+    try:
+        return rag_service.delete_document(document_id)
+    except DocumentNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DocumentProtectedError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except DocumentDeleteError as error:
+        logger.exception("Document deletion failed for %s", document_id)
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     message = request.message.strip()
@@ -73,54 +112,43 @@ async def chat(request: ChatRequest):
             content={"detail": "Message cannot be empty."},
         )
 
-    payload = {
-        "model": OLLAMA_MODEL,
-        "stream": False,
-        "messages": [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT.format(knowledge=load_knowledge()),
-            },
-            {"role": "user", "content": message},
-        ],
-    }
-
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            ollama_response = await client.post(OLLAMA_CHAT_URL, json=payload)
-            ollama_response.raise_for_status()
-    except httpx.ConnectError:
+        matches = await rag_service.search(message)
+        context = "\n\n".join(
+            f"[{match['metadata'].get('filename', 'unknown')}] {match['text']}"
+            for match in matches
+        )
+        reply = await ollama.chat(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT.format(context=context or "No matching local knowledge was found.")},
+                {"role": "user", "content": message},
+            ]
+        )
+    except OllamaError as error:
+        logger.exception("Ollama request failed")
         return JSONResponse(
             status_code=503,
-            content={
-                "detail": "Could not connect to Ollama. Make sure Ollama is running on the host PC."
-            },
+            content={"detail": str(error)},
         )
-    except httpx.TimeoutException:
+    except Exception:
+        logger.exception("Unexpected chat failure")
         return JSONResponse(
-            status_code=504,
-            content={"detail": "Ollama took too long to respond."},
-        )
-    except httpx.HTTPStatusError as error:
-        return JSONResponse(
-            status_code=502,
-            content={"detail": f"Ollama returned an error: {error.response.text}"},
-        )
-    except httpx.RequestError:
-        return JSONResponse(
-            status_code=502,
-            content={"detail": "The request to Ollama failed."},
+            status_code=500,
+            content={"detail": "The chat request failed."},
         )
 
-    response_data = ollama_response.json()
-    reply = response_data.get("message", {}).get("content", "").strip()
-    if not reply:
-        return JSONResponse(
-            status_code=502,
-            content={"detail": "Ollama returned an empty response."},
-        )
-
-    return ChatResponse(reply=reply)
+    sources = [
+        {
+            "filename": match["metadata"].get("filename", ""),
+            "file_type": match["metadata"].get("file_type", ""),
+            "page_number": match["metadata"].get("page_number"),
+            "chunk_id": match["metadata"].get("chunk_id", ""),
+            "source_path": match["metadata"].get("source_path", ""),
+            "distance": match.get("distance"),
+        }
+        for match in matches
+    ]
+    return ChatResponse(reply=reply, sources=sources)
 
 
 app.mount("/", StaticFiles(directory=FRONTEND_PATH), name="frontend")

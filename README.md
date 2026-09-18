@@ -1,80 +1,170 @@
 # My AI Assistant
 
-A small self-hosted chatbot. The FastAPI backend runs in Docker and sends questions to Ollama running locally on the Windows host. The frontend is plain HTML, CSS, and JavaScript.
+A self-hosted local RAG chatbot. FastAPI and ChromaDB run in Docker, while Ollama runs on the Windows host. There are no cloud AI APIs, API keys, databases outside ChromaDB, or authentication in this version.
 
-## Required software
+## Architecture
+
+```text
+Browser
+  |
+  | GET / and POST /chat
+  v
+FastAPI in Docker
+  |-- reads/writes backend/data/documents/
+  |-- persists ChromaDB in backend/data/chroma/
+  |-- calls Ollama at http://host.docker.internal:11434
+  v
+Ollama on Windows host
+  |-- qwen3:8b for answers
+  |-- nomic-embed-text for local embeddings
+```
+
+Uploaded TXT, PDF, and DOCX files are parsed, split into overlapping chunks, embedded locally by Ollama, and stored in ChromaDB. Chat retrieves only the configured top-k chunks and sends those chunks to Qwen. The full document collection is never sent to the generation model.
+
+The existing `backend/data/knowledge.txt` is automatically indexed on the first chat request. It remains a valid source and is never discarded.
+
+## Requirements
 
 - Windows 10 or 11
-- Docker Desktop with Linux containers enabled
+- Docker Desktop using Linux containers
 - Ollama for Windows
-- A modern web browser
+- Ollama models `qwen3:8b` and `nomic-embed-text`
 
-## Start and check Ollama
-
-Install Ollama from [ollama.com](https://ollama.com/), then start the Ollama application. Ollama normally listens on `http://localhost:11434`.
-
-Check the installed models:
-
-```powershell
-ollama list
-```
-
-Verify it is running in PowerShell:
-
-```powershell
-Invoke-RestMethod http://localhost:11434/api/tags
-```
-
-If `qwen3:8b` is not listed, download it:
+Install and start Ollama, then run these in PowerShell:
 
 ```powershell
 ollama pull qwen3:8b
+ollama pull nomic-embed-text
+ollama list
+Invoke-RestMethod http://localhost:11434/api/tags
 ```
 
-You can also run it interactively to confirm the model works:
+Ollama must remain running on Windows. Do not put Ollama or either model in Docker, and do not expose Ollama directly to the internet.
 
-```powershell
-ollama run qwen3:8b
-```
+## Installation and startup
 
-Type a test question, then use `Ctrl+C` to exit. Keep the Ollama application running while using the chatbot.
-
-## Exact Windows startup steps
-
-Open PowerShell in this project directory and run:
+From PowerShell:
 
 ```powershell
 Set-Location "C:\Users\mohan\Documents\mohan apps\jntuweb"
-
-ollama list
-
+Copy-Item .env.example .env
+docker compose build
 docker compose up -d
-```
-
-The backend and website are available at `http://localhost:8000`. Check the backend with:
-
-```powershell
 Invoke-RestMethod http://localhost:8000/health
 ```
 
-The data directory is mounted into the container, so changes to `backend/data/knowledge.txt` are used on the next chat request without rebuilding.
+Open the website at:
 
-## Open the website
+```text
+http://localhost:8000/
+```
 
-Open `http://localhost:8000/`. FastAPI serves `index.html`, `style.css`, and `app.js` directly, so no separate frontend server or port is needed.
+FastAPI serves the HTML, CSS, and JavaScript, so no separate frontend server is needed.
 
-## Test the complete chatbot
+## Configuration
 
-1. Run `ollama list` and confirm `qwen3:8b` is available.
-2. Run `docker compose up -d`.
-3. Check `http://localhost:8000/` and `http://localhost:8000/health`.
-4. Open `http://localhost:8000/` and ask: `When does the library close?`.
-5. The answer should come from `backend/data/knowledge.txt`.
-6. Ask a question unrelated to the file and confirm the assistant says the information is not available instead of inventing an answer.
+Copy `.env.example` to `.env` and edit values before starting Compose:
 
-You can also test the API directly:
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama host URL from Docker |
+| `OLLAMA_MODEL` | `qwen3:8b` | Generation model |
+| `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Local embedding model |
+| `CHUNK_SIZE` | `1000` | Approximate chunk size in characters |
+| `CHUNK_OVERLAP` | `150` | Character overlap between chunks |
+| `TOP_K` | `4` | Number of retrieved chunks per chat request |
+| `MAX_UPLOAD_SIZE_MB` | `20` | Maximum upload size |
+| `CHROMA_COLLECTION` | `local_documents` | Chroma collection name |
+
+`backend/data/` is bind-mounted into the container. Therefore `documents/` and `chroma/` survive container recreation and can be backed up with the project data. Do not delete `backend/data/chroma/` unless you intend to rebuild the index.
+
+## Ingestion
+
+Use the API to upload a document:
 
 ```powershell
+Invoke-RestMethod `
+  -Uri http://localhost:8000/ingest `
+  -Method Post `
+  -Form @{ file = Get-Item .\path\to\document.pdf }
+```
+
+Supported formats are `.txt`, `.pdf`, and `.docx`. Files are saved under `backend/data/documents/`. SHA-256 document hashes prevent re-indexing the same content. Re-uploading the same filename with changed content replaces its old chunks. Duplicate chunk IDs are not added.
+
+List indexed documents:
+
+```powershell
+Invoke-RestMethod http://localhost:8000/documents
+```
+
+## Document management UI
+
+Open `http://localhost:8000/` and use the `Documents` tab to manage the local knowledge base. The UI supports PDF, DOCX, and TXT files, multiple selection, drag-and-drop, file sizes, per-file processing results, refresh, and an empty state.
+
+Each selected file is sent independently to the existing `POST /ingest` endpoint. A failure for one file is shown beside that file while other files continue processing. Identical content is skipped using its document hash.
+
+Indexed uploaded files appear with their type, size, chunk count, and status. The Delete action asks for confirmation and calls `DELETE /documents/{document_id}` using the stable SHA-256 document ID. The API removes both the file in `backend/data/documents/` and its Chroma chunks. The built-in `backend/data/knowledge.txt` source is labeled and cannot be deleted from the UI.
+
+The browser receives metadata only; document contents remain on the backend. Chat source citations continue to show filenames and PDF page numbers when available.
+
+## API endpoints
+
+### `GET /`
+
+Serves the chatbot webpage.
+
+### `GET /health`
+
+Returns:
+
+```json
+{"status":"ok"}
+```
+
+### `POST /ingest`
+
+Multipart upload with field name `file`. Returns the indexing status, hash, and chunk count.
+
+### `GET /documents`
+
+Returns indexed filenames, types, source paths, hashes, chunk counts, sizes, stable IDs, and status. Existing response fields remain available.
+
+### `DELETE /documents/{document_id}`
+
+Deletes one uploaded document by its 64-character SHA-256 document ID. Built-in `knowledge.txt` and arbitrary paths are rejected. A failed Chroma or filesystem deletion returns an error instead of falsely reporting success.
+
+### `POST /chat`
+
+Request:
+
+```json
+{"message":"When does the library close?"}
+```
+
+Response:
+
+```json
+{
+  "reply": "...",
+  "sources": [
+    {
+      "filename": "knowledge.txt",
+      "file_type": "txt",
+      "chunk_id": "...",
+      "source_path": "/app/backend/data/knowledge.txt",
+      "distance": 0.2
+    }
+  ]
+}
+```
+
+The frontend displays source filenames and page numbers when available.
+
+## Testing
+
+```powershell
+Invoke-RestMethod http://localhost:8000/health
+Invoke-RestMethod http://localhost:8000/documents
 Invoke-RestMethod `
   -Uri http://localhost:8000/chat `
   -Method Post `
@@ -82,32 +172,33 @@ Invoke-RestMethod `
   -Body '{"message":"When does the library close?"}'
 ```
 
-## Stop the application
+To test retrieval, create a small TXT file with a unique fact, upload it using `/ingest`, then ask a question containing that fact. Confirm the response includes the uploaded filename in `sources`.
 
-To stop the backend and remove its container and network, run:
+## Troubleshooting
+
+- **Ollama connection error:** Confirm the Ollama desktop application is running and test `Invoke-RestMethod http://localhost:11434/api/tags` on Windows.
+- **Model not found:** Run `ollama pull qwen3:8b` and `ollama pull nomic-embed-text`.
+- **Embedding error during ingestion:** Check `OLLAMA_EMBED_MODEL` and make sure that model supports embeddings.
+- **Upload rejected:** Only TXT, PDF, and DOCX files up to `MAX_UPLOAD_SIZE_MB` are accepted.
+- **Old answers after editing a document:** Re-upload the changed file. Changed content replaces chunks for the same source path; identical content is skipped.
+- **Chroma data missing:** Check that `backend/data/chroma/` exists and that Docker has access to the project directory.
+- **Port already in use:** Stop the other service using port 8000 or change the published port in `docker-compose.yml` and the frontend `BACKEND_URL`.
+- **Documents tab cannot load:** Check `docker compose logs -f backend` and confirm the container is running at `http://localhost:8000`.
+
+View backend logs with:
+
+```powershell
+docker compose logs -f backend
+```
+
+## Production considerations
+
+Before exposing this application through a tunnel or reverse proxy, add authentication, rate limiting, request size limits at the proxy, HTTPS, backups for `backend/data/`, and a restricted upload policy. Expose only FastAPI. Never expose Ollama's port directly. Review source-path disclosure in API responses before making the service public.
+
+Document upload and deletion are intentionally unauthenticated for local-only use. They must be protected with authentication and authorization before any public deployment.
+
+## Stop the application
 
 ```powershell
 docker compose down
 ```
-
-## Architecture
-
-```text
-Browser (frontend served by FastAPI at http://localhost:8000/)
-        |
-        | POST http://localhost:8000/chat
-        v
-FastAPI backend (Docker container)
-        |
-        | http://host.docker.internal:11434/api/chat
-        v
-Ollama (Windows host, qwen3:8b)
-```
-
-The backend reads `backend/data/knowledge.txt` and includes its contents in the system prompt sent to Ollama. Ollama is not exposed by this project; only the FastAPI port is published. There are no cloud AI services, API keys, database, RAG system, or authentication in this first version.
-
-## Windows and Docker notes
-
-Docker Desktop must be running, and the backend container must use Linux containers. `host.docker.internal` is the Docker Desktop hostname that lets a container reach services on the Windows host. The Compose file also includes a host-gateway mapping for compatibility.
-
-Do not publish Ollama's port through your router or tunnel. If the application is made public later, expose only the backend through a properly secured reverse proxy or tunnel, and add authentication and rate limiting before doing so.

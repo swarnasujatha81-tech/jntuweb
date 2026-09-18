@@ -1,0 +1,12 @@
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      OLLAMA_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: qwen3:8b
+    volumes:
+      - ./backend/data:/app/backend/data:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

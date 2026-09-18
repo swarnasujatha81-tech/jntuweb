@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My AI Assistant</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="chat-shell" aria-label="My AI Assistant">
+    <header class="chat-header">
+      <div class="assistant-mark" aria-hidden="true">AI</div>
+      <div>
+        <h1>My AI Assistant</h1>
+        <p>Local knowledge assistant</p>
+      </div>
+      <span class="status-dot" title="Ready"></span>
+    </header>
+
+    <section id="messages" class="messages" aria-live="polite" aria-label="Chat messages">
+      <div class="message assistant-message">
+        <div class="message-label">Assistant</div>
+        <p>Hello. Ask me something about the available local knowledge.</p>
+      </div>
+    </section>
+
+    <form id="chat-form" class="chat-form">
+      <label class="sr-only" for="message-input">Your message</label>
+      <textarea id="message-input" rows="1" maxlength="2000" placeholder="Ask a question..." required></textarea>
+      <button id="send-button" type="submit">Send</button>
+    </form>
+    <p class="connection-note">Powered by Ollama on your computer</p>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

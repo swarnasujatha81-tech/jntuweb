@@ -37,7 +37,7 @@ class OllamaClient:
         return embeddings
 
     async def chat(self, messages: list[dict[str, str]]) -> str:
-        payload = {"model": self.model, "stream": False, "messages": messages}
+        payload = {"model": self.model, "stream": False, "think": False, "messages": messages}
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 response = await client.post(f"{self.base_url}/api/chat", json=payload)

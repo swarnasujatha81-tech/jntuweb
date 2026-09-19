@@ -16,6 +16,11 @@ const selectedFiles = document.querySelector("#selected-files");
 const documentNotice = document.querySelector("#document-notice");
 const documentsList = document.querySelector("#documents-list");
 const refreshDocumentsButton = document.querySelector("#refresh-documents");
+const adminLoginPanel = document.querySelector("#admin-login-panel");
+const adminDocumentsPanel = document.querySelector("#admin-documents-panel");
+const adminLoginForm = document.querySelector("#admin-login-form");
+const adminLoginNotice = document.querySelector("#admin-login-notice");
+const adminLogoutButton = document.querySelector("#admin-logout");
 let filesToUpload = [];
 
 function addMessage(text, sender, sources = []) {
@@ -113,12 +118,16 @@ input.addEventListener("input", () => {
   input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
 });
 
+function activateView(viewId) {
+  tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.view === viewId));
+  panels.forEach((panel) => panel.classList.toggle("active-view", panel.id === viewId));
+}
+
 tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
-    tabs.forEach((item) => item.classList.toggle("active", item === tab));
-    panels.forEach((panel) => panel.classList.toggle("active-view", panel.id === tab.dataset.view));
+    activateView(tab.dataset.view);
     if (tab.dataset.view === "documents-view") {
-      loadDocuments();
+      checkAdminSession();
     }
   });
 });
@@ -156,6 +165,64 @@ function showNotice(message, type = "") {
   documentNotice.className = `document-notice ${type}`.trim();
 }
 
+function showAdminLogin(message = "") {
+  adminLoginPanel.hidden = false;
+  adminDocumentsPanel.hidden = true;
+  adminLoginNotice.textContent = message;
+  adminLoginNotice.className = `document-notice ${message ? "error" : ""}`.trim();
+}
+
+function showAdminDocuments(username) {
+  activateView("documents-view");
+  adminLoginPanel.hidden = true;
+  adminDocumentsPanel.hidden = false;
+  document.querySelector("#admin-identity").textContent = "Logged in as Admin";
+  loadDocuments();
+}
+
+async function checkAdminSession() {
+  try {
+    const response = await fetch(`${BACKEND_URL}/admin/me`);
+    if (!response.ok) {
+      showAdminLogin();
+      return;
+    }
+    const data = await response.json();
+    showAdminDocuments(data.username);
+  } catch (error) {
+    showAdminLogin("Could not check admin login.");
+  }
+}
+
+adminLoginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formData = new FormData(adminLoginForm);
+  const loginButton = adminLoginForm.querySelector("button");
+  loginButton.disabled = true;
+  adminLoginNotice.textContent = "Signing in...";
+  try {
+    const response = await fetch(`${BACKEND_URL}/admin/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: formData.get("username"), password: formData.get("password") }),
+    });
+    if (!response.ok) throw new Error(await getErrorMessage(response, "Invalid admin credentials."));
+    const data = await response.json();
+    adminLoginForm.reset();
+    showAdminDocuments(data.username);
+  } catch (error) {
+    showAdminLogin(error.message);
+  } finally {
+    loginButton.disabled = false;
+  }
+});
+
+adminLogoutButton.addEventListener("click", async () => {
+  await fetch(`${BACKEND_URL}/admin/logout`, { method: "POST" });
+  documentsList.replaceChildren();
+  showAdminLogin();
+});
+
 fileInput.addEventListener("change", () => setSelectedFiles(Array.from(fileInput.files || [])));
 
 dropZone.addEventListener("dragover", (event) => {
@@ -189,6 +256,7 @@ uploadForm.addEventListener("submit", async (event) => {
     try {
       const response = await fetch(`${BACKEND_URL}/ingest`, { method: "POST", body: formData });
       if (!response.ok) {
+        if (response.status === 401) showAdminLogin("Your admin session has expired.");
         throw new Error(await getErrorMessage(response, "The upload failed."));
       }
       const result = await response.json();
@@ -254,6 +322,10 @@ async function loadDocuments() {
   refreshDocumentsButton.disabled = true;
   try {
     const response = await fetch(`${BACKEND_URL}/documents`);
+    if (response.status === 401) {
+      showAdminLogin("Your admin session has expired.");
+      return;
+    }
     if (!response.ok) throw new Error(await getErrorMessage(response, "Could not load documents."));
     const data = await response.json();
     if (!Array.isArray(data.documents)) throw new Error("The backend returned an invalid document list.");
@@ -275,6 +347,10 @@ async function deleteDocument(document) {
   showNotice(`Deleting ${document.filename}...`);
   try {
     const response = await fetch(`${BACKEND_URL}/documents/${encodeURIComponent(document.id)}`, { method: "DELETE" });
+    if (response.status === 401) {
+      showAdminLogin("Your admin session has expired.");
+      return;
+    }
     if (!response.ok) throw new Error(await getErrorMessage(response, "The document could not be deleted."));
     showNotice(`${document.filename} deleted.`, "success");
     await loadDocuments();
@@ -284,4 +360,3 @@ async function deleteDocument(document) {
 }
 
 refreshDocumentsButton.addEventListener("click", loadDocuments);
-loadDocuments();

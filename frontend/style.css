@@ -61,6 +61,14 @@ h1 { margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 18px; }
 .sources span { overflow-wrap: anywhere; }
 
 #documents-view { overflow-y: auto; padding: 22px 24px; }
+.admin-login-panel { max-width: 360px; margin: 42px auto; }
+.admin-login-panel h2 { margin: 0 0 20px; font-family: 'Space Grotesk', sans-serif; font-size: 20px; }
+.admin-login-form { display: grid; gap: 8px; }
+.admin-login-form label { color: var(--muted); font-size: 13px; font-weight: 600; }
+.admin-login-form input { min-height: 42px; padding: 10px 12px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.admin-login-form button { min-height: 42px; margin-top: 8px; }
+.admin-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.admin-documents-panel[hidden], .admin-login-panel[hidden] { display: none; }
 .documents-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .documents-toolbar h2 { margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 20px; }
 .documents-toolbar p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }

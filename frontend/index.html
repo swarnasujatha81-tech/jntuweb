@@ -38,12 +38,29 @@
     </section>
 
     <section id="documents-view" class="view-panel" aria-label="Document management">
+      <div id="admin-login-panel" class="admin-login-panel">
+        <h2>Admin login required</h2>
+        <form id="admin-login-form" class="admin-login-form">
+          <label for="admin-username">Username</label>
+          <input id="admin-username" name="username" type="text" autocomplete="username" required />
+          <label for="admin-password">Password</label>
+          <input id="admin-password" name="password" type="password" autocomplete="current-password" required />
+          <button type="submit">Login</button>
+        </form>
+        <div id="admin-login-notice" class="document-notice" role="status" aria-live="polite"></div>
+      </div>
+
+      <div id="admin-documents-panel" class="admin-documents-panel" hidden>
       <div class="documents-toolbar">
         <div>
           <h2>Documents</h2>
           <p>Manage local files used by the assistant.</p>
         </div>
-        <button id="refresh-documents" class="secondary-button" type="button">Refresh</button>
+        <div class="admin-actions">
+          <span id="admin-identity" class="document-meta">Logged in as Admin</span>
+          <button id="refresh-documents" class="secondary-button" type="button">Refresh</button>
+          <button id="admin-logout" class="secondary-button" type="button">Logout</button>
+        </div>
       </div>
 
       <div id="document-notice" class="document-notice" role="status" aria-live="polite"></div>
@@ -59,6 +76,7 @@
       </form>
 
       <div id="documents-list" class="documents-list" aria-live="polite"></div>
+      </div>
     </section>
 
     <p class="connection-note">Powered by Ollama on your computer</p>

@@ -75,6 +75,17 @@ Copy `.env.example` to `.env` and edit values before starting Compose:
 | `TOP_K` | `4` | Number of retrieved chunks per chat request |
 | `MAX_UPLOAD_SIZE_MB` | `20` | Maximum upload size |
 | `CHROMA_COLLECTION` | `local_documents` | Chroma collection name |
+| `MAX_CONCURRENT_GENERATIONS` | `2` | Maximum simultaneous Ollama answer generations |
+| `CHAT_RATE_LIMIT` | `20` | Maximum chat requests per client IP in the rate window |
+| `CHAT_RATE_WINDOW_SECONDS` | `60` | Per-IP chat rate-limit window |
+| `MAX_CHAT_MESSAGE_LENGTH` | `4000` | Maximum chat message length in characters |
+| `ADMIN_USERNAME` | required | Admin username for document management |
+| `ADMIN_PASSWORD` | required | Admin password for document management |
+| `ADMIN_COOKIE_SECURE` | `false` | Set `true` when serving through HTTPS |
+
+Chat requests are public and do not require authentication or a user ID. Conversations are not stored by the backend. The in-memory per-IP rate limiter and generation queue apply to the running FastAPI process; use shared rate limiting and a coordinated worker strategy if deploying multiple backend replicas.
+
+Document management requires the admin session created by `POST /admin/login`. `POST /admin/logout` clears the session, and `GET /admin/me` checks it. `POST /ingest`, `GET /documents`, and `DELETE /documents/{document_id}` return `401` without an authenticated admin session. Chat, health, and static frontend files remain public.
 
 `backend/data/` is bind-mounted into the container. Therefore `documents/` and `chroma/` survive container recreation and can be backed up with the project data. Do not delete `backend/data/chroma/` unless you intend to rebuild the index.
 
